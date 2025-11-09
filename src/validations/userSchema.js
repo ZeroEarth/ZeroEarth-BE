@@ -1,7 +1,7 @@
 const Joi = require('joi');
 
 const createUserSchema = Joi.object({
-  role: Joi.string().valid('admin', 'manufacturer', 'camp_lead').required(),
+  role: Joi.string().valid('admin', 'manufacturer', 'camp_lead','auditor', 'farmer').required(),
   mobile_number: Joi.string().pattern(/^\d{10}$/).required(),
 
   name: Joi.string().required(),
@@ -82,11 +82,20 @@ const editManufacturerSchema = Joi.object({
   password: Joi.string().min(4).optional() 
 });
 
+/** --- Generic User Edit Schema --- */
+const editUserSchema = Joi.object({
+  mobile_number: Joi.string().pattern(/^\d{10}$/).optional(),
+  password: Joi.string().min(4).optional()
+}).min(1).messages({
+  'object.min': 'At least one field (mobile_number or password) must be provided'
+});
+
 
 
 
 module.exports = {
     createUserSchema,
     editCampLeadSchema,
-    editManufacturerSchema
+    editManufacturerSchema,
+    editUserSchema
 }

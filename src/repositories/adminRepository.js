@@ -1,6 +1,7 @@
 const db = require("../config/db");
 const USERS_TABLE = 'users';
 const { customFarmerSubQuery } = require("../utils/constants");
+const MANAGEABLE_ROLES = ['admin', 'manufacturer', 'camp_lead'];
 
 
 class AdminRepository {
@@ -303,6 +304,66 @@ class AdminRepository {
         return result.rows;
     }
 
+    async countUsers(roles = MANAGEABLE_ROLES) {
+        const query = `
+            SELECT COUNT(*) AS total
+            FROM users u
+            WHERE u.role = ANY($1::user_role[]);
+        `;
+        const result = await db.query(query, [roles]);
+        return parseInt(result.rows[0].total, 10);
+    }
+    
+    async getAllUsers(limit, offset, roles = MANAGEABLE_ROLES) {
+        const query = `
+            SELECT 
+                u.id,
+                u.mobile_number,
+                u.role,
+                u.ref_id,
+                u.created_at,
+                COALESCE(cl.name, m.name, a.name, f.name, 'N/A') AS name,
+                CASE 
+                    WHEN u.role = 'camp_lead' THEN cl.id
+                    WHEN u.role = 'manufacturer' THEN m.id
+                    WHEN u.role = 'admin' THEN a.id
+                    ELSE u.ref_id
+                END AS entity_id,
+                CASE 
+                    WHEN u.role = 'camp_lead' THEN cl.manufacturer_id
+                    WHEN u.role = 'manufacturer' THEN m.id
+                    ELSE NULL
+                END AS manufacturer_id,
+                CASE 
+                    WHEN u.role = 'manufacturer' THEN m.muid
+                    ELSE NULL
+                END AS manufacturer_code,
+                CASE 
+                    WHEN u.role = 'camp_lead' THEN cl.district
+                    WHEN u.role = 'manufacturer' THEN m.location
+                    ELSE NULL
+                END AS location
+            FROM users u
+            LEFT JOIN farmers f 
+                ON u.ref_id = f.id 
+                AND u.role IN ('farmer', 'camp_lead')
+            LEFT JOIN camp_leads cl 
+                ON u.role = 'camp_lead' 
+                AND cl.mobile_number = f.mobile_number
+            LEFT JOIN manufacturers m 
+                ON u.role = 'manufacturer' 
+                AND u.ref_id = m.id
+            LEFT JOIN admins a 
+                ON u.role = 'admin' 
+                AND u.ref_id = a.id
+            WHERE u.role = ANY($3::user_role[])
+            ORDER BY u.created_at DESC
+            LIMIT $1 OFFSET $2;
+        `;
+        const result = await db.query(query, [limit, offset, roles]);
+        return result.rows;
+    }
+
     async countCampLeads() {
         const query = `
             SELECT COUNT(*) AS total
@@ -413,6 +474,37 @@ class AdminRepository {
             RETURNING *;
         `;
         values.push(farmer_id);
+
+        const { rows } = await client.query(query, values);
+        return rows[0];
+    }
+
+    // Get user by ID
+    async getUserById(client, userId) {
+        const query = `SELECT * FROM ${USERS_TABLE} WHERE id = $1 LIMIT 1`;
+        const { rows } = await client.query(query, [userId]);
+        return rows[0];
+    }
+
+    // Update user by user ID
+    async updateUserById(client, userId, updateData) {
+        const fields = [];
+        const values = [];
+        let idx = 1;
+
+        for (const key of Object.keys(updateData)) {
+            fields.push(`${key} = $${idx}`);
+            values.push(updateData[key]);
+            idx++;
+        }
+
+        const query = `
+            UPDATE users
+            SET ${fields.join(', ')}
+            WHERE id = $${idx}
+            RETURNING *;
+        `;
+        values.push(userId);
 
         const { rows } = await client.query(query, values);
         return rows[0];

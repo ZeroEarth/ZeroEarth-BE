@@ -4,10 +4,11 @@ const adminController = require("../../controllers/adminController");
 const manfController = require("../../controllers/manufactureController");
 const { authorize, authenticate, validationMiddleware }  = require("../../middlewares");
 
-const { createUserSchema, editCampLeadSchema, editManufacturerSchema } = require("../../validations/userSchema");
+const { createUserSchema, editCampLeadSchema, editManufacturerSchema, editUserSchema } = require("../../validations/userSchema");
 
 const router = express.Router();
 
+router.get('/users', [authorize(['admin'])], adminController.getUsers);
 router.post('/users', [authorize(['admin']), validationMiddleware(createUserSchema)], adminController.createUser);
 router.get('/users/manufacturers', [authorize(['admin'])], adminController.getManufacturers);
 
@@ -30,6 +31,7 @@ router.get('/users/manufacturers/details', [authorize(['admin'])], manfControlle
 router.get('/users/campleads/details', [authorize(['admin'])], adminController.getAllCampLeads);
 router.put('/users/manufacturers/:manufacturer_id', [authorize(['admin']), validationMiddleware(editManufacturerSchema)], manfController.updateManufacturer);
 router.put('/users/campleads/:camplead_id/', [authorize(['admin']), validationMiddleware(editCampLeadSchema)], adminController.updateCamplead);
+router.put('/users/:user_id', [authorize(['admin']), validationMiddleware(editUserSchema)], adminController.updateUser);
 
 
 

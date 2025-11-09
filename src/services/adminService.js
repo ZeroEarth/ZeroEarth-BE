@@ -6,6 +6,8 @@ const CustomError = require("../utils/customError")
 
 const { SALT_ROUNDS, DEFAULT_PASSWORD} = require("../config/serverConfig");
 const { AdminRepository, CommunityMgtRepository } = require("../repositories");
+const ALLOWED_ROLES = ['admin', 'manufacturer', 'camp_lead', 'auditor', 'farmer'];
+const DEFAULT_USER_ROLES = ['admin', 'manufacturer', 'camp_lead','auditor', 'farmer'];
 
 class AdminService {
     constructor() {
@@ -398,7 +400,44 @@ class AdminService {
             campLeads
         };
     }
-
+    
+    async getUsers(queryParams) {
+        try {
+            const page = parseInt(queryParams.page, 10) || 1;
+            const limit = parseInt(queryParams.limit, 10) || 50;
+            const offset = (page - 1) * limit;
+            const rolesFilter = this.buildRoleFilter(queryParams.role);
+            const totalCount = await this.adminRepository.countUsers(rolesFilter);
+            const users = await this.adminRepository.getAllUsers(limit, offset, rolesFilter);
+    
+            return {
+                page,
+                limit,
+                totalCount,
+                totalPages: Math.ceil(totalCount / limit),
+                users
+            };
+        } catch (error) {
+            console.error("Error fetching users:", error);
+            throw error;
+        }
+    }
+    
+    buildRoleFilter(roleParam) {
+        const roles = roleParam
+            ? roleParam
+                .split(',')
+                .map((role) => role.trim().toLowerCase())
+                .filter(Boolean)
+            : DEFAULT_USER_ROLES;
+    
+        const validRoles = roles.filter((role) => ALLOWED_ROLES.includes(role));
+        if (!validRoles.length) {
+            throw new CustomError("Invalid role filter supplied", 400);
+        }
+        return validRoles;
+    }
+    
     async updateCamplead(client, payload) {
         try {
             console.log("=====PAYLOAD", payload);
@@ -451,6 +490,40 @@ class AdminService {
             return updatedCampLead;
         } catch (error) {
             console.error("Error updating camp lead:", error.message);
+            throw error;
+        }
+    }
+
+    async updateUser(client, userId, payload) {
+        try {
+            // Check if user exists
+            const existingUser = await this.adminRepository.getUserById(client, userId);
+            if (!existingUser) {
+                throw new CustomError("User not found", 404);
+            }
+
+            const { mobile_number, password } = payload;
+            const updateData = {};
+
+            // Check mobile number uniqueness if it's being updated
+            if (mobile_number) {
+                const userWithMobile = await this.adminRepository.findUserByMobile(client, mobile_number);
+                if (userWithMobile && userWithMobile.id !== parseInt(userId)) {
+                    throw new CustomError("Mobile number already exists. Please use a different one.", 400);
+                }
+                updateData.mobile_number = mobile_number;
+            }
+
+            // Hash password if it's being updated
+            if (password) {
+                updateData.password = await bcrypt.hash(password, SALT_ROUNDS);
+            }
+
+            // Update user
+            const updatedUser = await this.adminRepository.updateUserById(client, userId, updateData);
+            return updatedUser;
+        } catch (error) {
+            console.error("Error updating user:", error.message);
             throw error;
         }
     }

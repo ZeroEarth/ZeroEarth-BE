@@ -32,6 +32,15 @@ const getManufacturers = async (req, res) => {
   
 }
 
+const getUsers = async (req, res) => {
+  try {
+    const response = await adminService.getUsers(req.query);
+    return sendSuccessResponse(res, response, "Users fetched successfully", 200);
+  } catch (error) {
+      return sendErrorResponse(res, error, "Failed to fetch users");
+  }
+}
+
 const getDashBoardDetails = async (req, res) => {
   try {
     const response = await adminService.getDashboardDetails()
@@ -167,9 +176,22 @@ const updateCamplead = async (req, res) => {
   }
 };
 
+const updateUser = async (req, res) => {
+  try {
+      const { user_id } = req.params;
+      const response = await withTransaction(async (client) => {
+          return await adminService.updateUser(client, parseInt(user_id), req.body);
+      });
+      return sendSuccessResponse(res, response, "User updated successfully", 200);
+  } catch (error) {
+      return sendErrorResponse(res, error, "Failed to update user");
+  }
+};
+
 module.exports = {
     createUser,
     getManufacturers,
+    getUsers,
     getDashBoardDetails,
     getWeeklyOffsets,
     getFarmersByMonth,
@@ -179,6 +201,7 @@ module.exports = {
     exportFractionalOffsetId,
     getAllCampLeads,
     updateCamplead,
+    updateUser,
     exportCampleads,
     exportFarmers
 }
