@@ -5,14 +5,15 @@ const CustomError = require("../utils/customError")
 
 
 const { SALT_ROUNDS, DEFAULT_PASSWORD} = require("../config/serverConfig");
-const { AdminRepository, CommunityMgtRepository } = require("../repositories");
+const { AdminRepository, CommunityMgtRepository, ManufactureRepository } = require("../repositories");
 const ALLOWED_ROLES = ['admin', 'manufacturer', 'camp_lead', 'auditor', 'farmer'];
 const DEFAULT_USER_ROLES = ['admin', 'manufacturer', 'camp_lead','auditor', 'farmer'];
 
 class AdminService {
     constructor() {
         this.adminRepository = new AdminRepository();
-        this.communityMgtRepository = new CommunityMgtRepository(); 
+        this.communityMgtRepository = new CommunityMgtRepository();
+        this.manufactureRepository = new ManufactureRepository();
     }
 
     async createUser(client, role, data, userId) {
@@ -407,8 +408,9 @@ class AdminService {
             const limit = parseInt(queryParams.limit, 10) || 50;
             const offset = (page - 1) * limit;
             const rolesFilter = this.buildRoleFilter(queryParams.role);
-            const totalCount = await this.adminRepository.countUsers(rolesFilter);
-            const users = await this.adminRepository.getAllUsers(limit, offset, rolesFilter);
+            const searchTerm = queryParams.search ? queryParams.search.trim() : null;
+            const totalCount = await this.adminRepository.countUsers(rolesFilter, searchTerm);
+            const users = await this.adminRepository.getAllUsers(limit, offset, rolesFilter, searchTerm);
     
             return {
                 page,
@@ -502,8 +504,17 @@ class AdminService {
                 throw new CustomError("User not found", 404);
             }
 
-            const { mobile_number, password } = payload;
-            const updateData = {};
+            const { name, mobile_number, password, role } = payload;
+            const userRole = existingUser.role;
+            const refId = existingUser.ref_id;
+
+            // Validate role if provided (should match existing role)
+            if (role && role !== userRole) {
+                throw new CustomError("Cannot change user role through this endpoint", 400);
+            }
+
+            // Prepare user table updates
+            const userUpdateData = {};
 
             // Check mobile number uniqueness if it's being updated
             if (mobile_number) {
@@ -511,16 +522,121 @@ class AdminService {
                 if (userWithMobile && userWithMobile.id !== parseInt(userId)) {
                     throw new CustomError("Mobile number already exists. Please use a different one.", 400);
                 }
-                updateData.mobile_number = mobile_number;
+                userUpdateData.mobile_number = mobile_number;
             }
 
             // Hash password if it's being updated
             if (password) {
-                updateData.password = await bcrypt.hash(password, SALT_ROUNDS);
+                userUpdateData.password = await bcrypt.hash(password, SALT_ROUNDS);
             }
 
-            // Update user
-            const updatedUser = await this.adminRepository.updateUserById(client, userId, updateData);
+            // Update entity table based on role
+            if (name) {
+                if (!refId) {
+                    throw new CustomError(`User ref_id is missing. Cannot update ${userRole} entity.`, 400);
+                }
+
+                switch (userRole) {
+                    case 'farmer':
+                    case 'auditor':
+                        // Update farmers table
+                        const farmer = await this.adminRepository.getFarmerByRefId(client, refId);
+                        if (!farmer) {
+                            throw new CustomError("Farmer not found", 404);
+                        }
+                        await this.adminRepository.updateFarmerName(client, refId, name);
+                        if (mobile_number) {
+                            await this.adminRepository.updateFarmerMobile(client, refId, mobile_number);
+                        }
+                        break;
+
+                    case 'camp_lead':
+                        // Update both farmers and camp_leads tables
+                        // Get farmer to find camp lead
+                        const campLeadFarmer = await this.adminRepository.getFarmerByRefId(client, refId);
+                        if (!campLeadFarmer) {
+                            throw new CustomError("Farmer not found for camp lead", 404);
+                        }
+
+                        // Find camp lead by current farmer mobile number (before update)
+                        const campLead = await this.adminRepository.getCampLeadByFarmerMobile(
+                            client, 
+                            campLeadFarmer.mobile_number
+                        );
+                        if (!campLead) {
+                            throw new CustomError("Camp lead not found for farmer", 404);
+                        }
+
+                        // Update farmer
+                        await this.adminRepository.updateFarmerName(client, refId, name);
+                        if (mobile_number) {
+                            await this.adminRepository.updateFarmerMobile(client, refId, mobile_number);
+                        }
+
+                        // Update camp lead
+                        await this.adminRepository.updateCampLeadName(client, campLead.id, name);
+                        if (mobile_number) {
+                            await this.adminRepository.updateCampLeadMobile(client, campLead.id, mobile_number);
+                        }
+                        break;
+
+                    case 'manufacturer':
+                        // Update manufacturers table
+                        // Get current manufacturer data
+                        const manufacturer = await this.manufactureRepository.getManufacturerById(client, refId);
+                        if (!manufacturer) {
+                            throw new CustomError("Manufacturer not found", 404);
+                        }
+                        
+                        const manufacturerUpdateData = {
+                            name: name,
+                            location: manufacturer.location,
+                            muid: manufacturer.muid
+                        };
+                        await this.manufactureRepository.updateManufacturer(client, refId, manufacturerUpdateData);
+                        break;
+
+                    case 'admin':
+                        // Update admins table
+                        const admin = await this.adminRepository.getAdminByRefId(client, refId);
+                        if (!admin) {
+                            throw new CustomError("Admin not found", 404);
+                        }
+                        await this.adminRepository.updateAdmin(client, refId, { name });
+                        break;
+
+                    default:
+                        throw new CustomError(`Update not supported for role: ${userRole}`, 400);
+                }
+            } else if (mobile_number && (userRole === 'farmer' || userRole === 'auditor' || userRole === 'camp_lead')) {
+                // If only mobile_number is being updated for farmer/auditor/camp_lead, update entity table
+                if (refId) {
+                    if (userRole === 'camp_lead') {
+                        const farmer = await this.adminRepository.getFarmerByRefId(client, refId);
+                        if (!farmer) {
+                            throw new CustomError("Farmer not found for camp lead", 404);
+                        }
+                        // Find camp lead by current farmer mobile number
+                        const campLead = await this.adminRepository.getCampLeadByFarmerMobile(client, farmer.mobile_number);
+                        if (!campLead) {
+                            throw new CustomError("Camp lead not found for farmer", 404);
+                        }
+                        // Update both farmer and camp lead mobile numbers
+                        await this.adminRepository.updateFarmerMobile(client, refId, mobile_number);
+                        await this.adminRepository.updateCampLeadMobile(client, campLead.id, mobile_number);
+                    } else {
+                        await this.adminRepository.updateFarmerMobile(client, refId, mobile_number);
+                    }
+                }
+            }
+
+            // Update users table
+            if (Object.keys(userUpdateData).length > 0) {
+                await this.adminRepository.updateUserById(client, userId, userUpdateData);
+            }
+
+            // Return updated user
+            const updatedUser = await this.adminRepository.getUserById(client, userId);
             return updatedUser;
         } catch (error) {
             console.error("Error updating user:", error.message);

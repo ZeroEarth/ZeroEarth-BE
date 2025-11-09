@@ -304,18 +304,44 @@ class AdminRepository {
         return result.rows;
     }
 
-    async countUsers(roles = MANAGEABLE_ROLES) {
-        const query = `
-            SELECT COUNT(*) AS total
+    async countUsers(roles = MANAGEABLE_ROLES, searchTerm = null) {
+        let query = `
+            SELECT COUNT(DISTINCT u.id) AS total
             FROM users u
-            WHERE u.role = ANY($1::user_role[]);
+            LEFT JOIN farmers f 
+                ON u.ref_id = f.id 
+                AND u.role IN ('farmer', 'camp_lead', 'auditor')
+            LEFT JOIN camp_leads cl 
+                ON u.role = 'camp_lead' 
+                AND cl.mobile_number = f.mobile_number
+            LEFT JOIN manufacturers m 
+                ON u.role = 'manufacturer' 
+                AND u.ref_id = m.id
+            LEFT JOIN admins a 
+                ON u.role = 'admin' 
+                AND u.ref_id = a.id
+            WHERE u.role = ANY($1::user_role[])
         `;
-        const result = await db.query(query, [roles]);
+        
+        const params = [roles];
+        
+        if (searchTerm) {
+            query += ` AND (
+                u.mobile_number ILIKE $${params.length + 1} OR
+                f.name ILIKE $${params.length + 1} OR
+                cl.name ILIKE $${params.length + 1} OR
+                m.name ILIKE $${params.length + 1} OR
+                a.name ILIKE $${params.length + 1}
+            )`;
+            params.push(`%${searchTerm}%`);
+        }
+        
+        const result = await db.query(query, params);
         return parseInt(result.rows[0].total, 10);
     }
     
-    async getAllUsers(limit, offset, roles = MANAGEABLE_ROLES) {
-        const query = `
+    async getAllUsers(limit, offset, roles = MANAGEABLE_ROLES, searchTerm = null) {
+        let query = `
             SELECT 
                 u.id,
                 u.mobile_number,
@@ -346,7 +372,7 @@ class AdminRepository {
             FROM users u
             LEFT JOIN farmers f 
                 ON u.ref_id = f.id 
-                AND u.role IN ('farmer', 'camp_lead')
+                AND u.role IN ('farmer', 'camp_lead', 'auditor')
             LEFT JOIN camp_leads cl 
                 ON u.role = 'camp_lead' 
                 AND cl.mobile_number = f.mobile_number
@@ -357,10 +383,25 @@ class AdminRepository {
                 ON u.role = 'admin' 
                 AND u.ref_id = a.id
             WHERE u.role = ANY($3::user_role[])
-            ORDER BY u.created_at DESC
-            LIMIT $1 OFFSET $2;
         `;
-        const result = await db.query(query, [limit, offset, roles]);
+        
+        const params = [limit, offset, roles];
+        let paramIndex = 4;
+        
+        if (searchTerm) {
+            query += ` AND (
+                u.mobile_number ILIKE $${paramIndex} OR
+                f.name ILIKE $${paramIndex} OR
+                cl.name ILIKE $${paramIndex} OR
+                m.name ILIKE $${paramIndex} OR
+                a.name ILIKE $${paramIndex}
+            )`;
+            params.push(`%${searchTerm}%`);
+        }
+        
+        query += ` ORDER BY u.created_at DESC LIMIT $1 OFFSET $2;`;
+        
+        const result = await db.query(query, params);
         return result.rows;
     }
 
@@ -507,6 +548,104 @@ class AdminRepository {
         values.push(userId);
 
         const { rows } = await client.query(query, values);
+        return rows[0];
+    }
+
+    // Get farmer by ref_id
+    async getFarmerByRefId(client, refId) {
+        const query = `SELECT * FROM farmers WHERE id = $1 LIMIT 1`;
+        const { rows } = await client.query(query, [refId]);
+        return rows[0];
+    }
+
+    // Get admin by ref_id
+    async getAdminByRefId(client, refId) {
+        const query = `SELECT * FROM admins WHERE id = $1 LIMIT 1`;
+        const { rows } = await client.query(query, [refId]);
+        return rows[0];
+    }
+
+    // Update admin by ref_id
+    async updateAdmin(client, adminId, updateData) {
+        const fields = [];
+        const values = [];
+        let idx = 1;
+
+        for (const key of Object.keys(updateData)) {
+            fields.push(`${key} = $${idx}`);
+            values.push(updateData[key]);
+            idx++;
+        }
+
+        const query = `
+            UPDATE admins
+            SET ${fields.join(', ')}
+            WHERE id = $${idx}
+            RETURNING *;
+        `;
+        values.push(adminId);
+
+        const { rows } = await client.query(query, values);
+        return rows[0];
+    }
+
+    // Get camp lead by farmer mobile number (for camp_lead role)
+    async getCampLeadByFarmerMobile(client, mobileNumber) {
+        const query = `
+            SELECT cl.* 
+            FROM camp_leads cl
+            WHERE cl.mobile_number = $1
+            LIMIT 1
+        `;
+        const { rows } = await client.query(query, [mobileNumber]);
+        return rows[0];
+    }
+
+    // Update farmer name only (simplified version)
+    async updateFarmerName(client, farmerId, name) {
+        const query = `
+            UPDATE farmers
+            SET name = $1
+            WHERE id = $2
+            RETURNING *;
+        `;
+        const { rows } = await client.query(query, [name, farmerId]);
+        return rows[0];
+    }
+
+    // Update farmer mobile number
+    async updateFarmerMobile(client, farmerId, mobileNumber) {
+        const query = `
+            UPDATE farmers
+            SET mobile_number = $1
+            WHERE id = $2
+            RETURNING *;
+        `;
+        const { rows } = await client.query(query, [mobileNumber, farmerId]);
+        return rows[0];
+    }
+
+    // Update camp lead name
+    async updateCampLeadName(client, campLeadId, name) {
+        const query = `
+            UPDATE camp_leads
+            SET name = $1
+            WHERE id = $2
+            RETURNING *;
+        `;
+        const { rows } = await client.query(query, [name, campLeadId]);
+        return rows[0];
+    }
+
+    // Update camp lead mobile number
+    async updateCampLeadMobile(client, campLeadId, mobileNumber) {
+        const query = `
+            UPDATE camp_leads
+            SET mobile_number = $1
+            WHERE id = $2
+            RETURNING *;
+        `;
+        const { rows } = await client.query(query, [mobileNumber, campLeadId]);
         return rows[0];
     }
 }

@@ -84,10 +84,12 @@ const editManufacturerSchema = Joi.object({
 
 /** --- Generic User Edit Schema --- */
 const editUserSchema = Joi.object({
+  name: Joi.string().optional(),
   mobile_number: Joi.string().pattern(/^\d{10}$/).optional(),
-  password: Joi.string().min(4).optional()
+  password: Joi.string().min(4).optional(),
+  role: Joi.string().valid('admin', 'manufacturer', 'camp_lead', 'auditor', 'farmer').optional()
 }).min(1).messages({
-  'object.min': 'At least one field (mobile_number or password) must be provided'
+  'object.min': 'At least one field (name, mobile_number, or password) must be provided'
 });
 
 

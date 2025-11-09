@@ -223,6 +223,16 @@ class ManufactureRepository {
         return rows[0];
     }
     
+    async getManufacturerById(client, manufacturerId) {
+        const query = `
+            SELECT * FROM ${MANUFACTURERS_TABLE} 
+            WHERE id = $1 
+            LIMIT 1
+        `;
+        const { rows } = await client.query(query, [manufacturerId]);
+        return rows[0];
+    }
+
     async updateManufacturer(client, manufacturer_id, updateData) {
         const query = `
             UPDATE manufacturers
